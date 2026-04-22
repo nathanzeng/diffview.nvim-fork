@@ -131,6 +131,10 @@ function M.goto_file()
   open_goto_file({ target_tab = true, target_tab_cmd = "sp", cmd = "tabnew" })
 end
 
+function M.goto_file_close()
+  open_goto_file({ target_tab = true, target_tab_cmd = "tabc #", cmd = "tabnew" })
+end
+
 function M.goto_file_edit()
   open_goto_file({ target_tab = true, target_tab_cmd = "edit", cmd = "tabnew" })
 end
