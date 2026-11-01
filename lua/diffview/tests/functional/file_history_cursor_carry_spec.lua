@@ -117,6 +117,9 @@ describe("file history cursor carry", function()
     local main = open_history()
     api.nvim_set_current_win(main)
     api.nvim_win_set_cursor(main, { 50, 0 })
+    -- Setting the cursor through the API does not reveal its fold. Start
+    -- with visible code so the next revision must keep that code visible.
+    vim.cmd("normal! zv")
     eq("body 5", line_at(main))
 
     step("select_next_commit", 2)

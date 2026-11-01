@@ -324,6 +324,40 @@ describe("diffview.standard_view carry snapshot/restore", function()
     eq(false, view:restore_main_view("file.txt"))
   end)
 
+  for _, folded in ipairs({ true, false }) do
+    local description = folded and "preserves a closed fold at the saved cursor"
+      or "reveals a previously visible cursor"
+    it(description, function()
+      local a_win = pool.open(body("body", 100))
+      local lines = body("body", 100)
+      lines[50] = "changed"
+      local b_win = pool.open(lines)
+      local view = make_view(a_win, b_win)
+
+      for _, win in ipairs({ a_win, b_win }) do
+        api.nvim_win_call(win, function()
+          vim.cmd("diffthis")
+        end)
+      end
+      api.nvim_win_call(b_win, function()
+        vim.cmd("diffupdate")
+        api.nvim_win_set_cursor(b_win, { 10, 0 })
+        vim.cmd(folded and "normal! zM" or "normal! zR")
+        eq(folded, vim.fn.foldclosed(10) ~= -1)
+      end)
+
+      view:snapshot_main_view("file.txt")
+      api.nvim_win_call(b_win, function()
+        vim.cmd("normal! zM")
+      end)
+      assert.is_true(view:restore_main_view("file.txt"))
+
+      api.nvim_win_call(b_win, function()
+        eq(folded, vim.fn.foldclosed(api.nvim_win_get_cursor(b_win)[1]) ~= -1)
+      end)
+    end)
+  end
+
   it("restores a state that carries no buffer, as a session sidecar does", function()
     local a_win = pool.open(body("body", 20))
     local b_win = pool.open(body("body", 20))

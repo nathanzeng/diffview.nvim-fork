@@ -764,6 +764,10 @@ local update_files_impl = debounce.debounce_trailing(
     perf:lap("received new file list")
 
     local prev_cur_file = self.panel.cur_file
+    -- Invalidating the outgoing diff buffers can remove their folds before
+    -- file_open_pre runs. Capture the view while those folds still exist.
+    local outgoing = self.cur_entry
+    local outgoing_state = outgoing and self:snapshot_main_view(outgoing.path)
 
     local files = {
       { cur_files = self.files.conflicting, new_files = new_files.conflicting },
@@ -1011,6 +1015,9 @@ local update_files_impl = debounce.debounce_trailing(
       or not (self.cur_layout and self.cur_layout:is_valid() and self.cur_layout:is_files_loaded())
 
     if needs_reopen then
+      if next_file and outgoing and outgoing_state then
+        self._pre_update_carry = { entry = outgoing, state = outgoing_state }
+      end
       local focus = self:_should_focus_diff(next_file)
       self:set_file(next_file, focus, not self.initialized or nil)
     end
