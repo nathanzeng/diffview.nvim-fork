@@ -38,6 +38,7 @@ end
 ---@field layouts table<Layout, Layout>
 ---@field no_panel? boolean # Per-view `--no-panel` override. When set, takes precedence over the panel's `show` config (`nil` means defer to config).
 ---@field cursor_map table<string, StandardView.CarryState> # Repo-relative path → the cursor and viewport last seen for that path. Consumed the next time the path opens.
+---@field package _pre_update_carry? { entry: FileEntry, state: StandardView.CarryState } # Snapshot taken before a refresh invalidates the outgoing buffers.
 ---@field package _carry_lnum StandardView.CarryLnum? # A line resolved by a caller that knows it better than a diff between the two revisions can. Consumed once, by the next `restore_main_view`.
 ---@field package _set_file_in_flight Future? # Active `_set_file` worker; queued callers await this so `await(set_file)` returns only after the latest pending file is opened.
 ---@field package _set_file_pending FileEntry? # Newest file queued while `_set_file_in_flight` is set; the worker picks it up before terminating.
@@ -117,6 +118,8 @@ function StandardView:init(opt)
   -- Snapshot the leaving file's view state on every swap, so mid-navigation
   -- saves keep cursor + viewport for every visited file.
   self.emitter:on("file_open_pre", function(_, target, cur_entry)
+    local saved = self._pre_update_carry
+    self._pre_update_carry = nil
     if cur_entry and cur_entry.path then
       local alias = StandardView._rename_alias(cur_entry, target)
       -- A caller that resolved a line for `target` followed the file there
@@ -125,7 +128,14 @@ function StandardView:init(opt)
       if not alias and target and target.path ~= cur_entry.path and self:has_carry_lnum(target) then
         alias = target.path
       end
-      self:snapshot_main_view(cur_entry.path, alias)
+      if saved and saved.entry == cur_entry then
+        self.cursor_map[cur_entry.path] = saved.state
+        if alias then
+          self.cursor_map[alias] = saved.state
+        end
+      else
+        self:snapshot_main_view(cur_entry.path, alias)
+      end
     end
   end)
 
@@ -149,18 +159,27 @@ end
 ---@field winview table # A `winsaveview()` dict.
 ---@field bufnr? integer # The buffer `winview` was captured in. Missing on a state restored from a session sidecar.
 ---@field bufname? string # The name `bufnr` carried at capture time.
+---@field cursor_folded? boolean # Whether the saved cursor was in a closed fold.
 
 ---@param winid integer
 ---@return StandardView.CarryState?
 local function capture_winview(winid)
+  local cursor_folded
   local ok, winview = pcall(api.nvim_win_call, winid, function()
-    return vim.fn.winsaveview()
+    local view = vim.fn.winsaveview()
+    cursor_folded = vim.fn.foldclosed(view.lnum) ~= -1
+    return view
   end)
   if not (ok and type(winview) == "table") then
     return nil
   end
   local bufnr = api.nvim_win_get_buf(winid)
-  return { winview = winview, bufnr = bufnr, bufname = api.nvim_buf_get_name(bufnr) }
+  return {
+    winview = winview,
+    bufnr = bufnr,
+    bufname = api.nvim_buf_get_name(bufnr),
+    cursor_folded = cursor_folded,
+  }
 end
 
 ---Open the folds hiding the cursor line in `winid`.
@@ -264,6 +283,7 @@ end
 ---@param path string repo-relative file path; the map key.
 ---@param alias? string A second key holding the same state, for a file the
 ---next entry lists under another name. See `_rename_alias`.
+---@return StandardView.CarryState?
 function StandardView:snapshot_main_view(path, alias)
   local layout = self.cur_layout
   local main = layout and layout:get_main_win()
@@ -278,6 +298,7 @@ function StandardView:snapshot_main_view(path, alias)
       self.cursor_map[alias] = entry
     end
   end
+  return entry
 end
 
 ---Hand the next `restore_main_view` a line the caller resolved itself, in
@@ -338,7 +359,11 @@ function StandardView:restore_main_view(path)
   local ok = apply_winview(win.id, target, lnum)
 
   if ok then
-    reveal_cursor_line(win.id)
+    -- Keep a deliberately folded cursor folded across refreshes (including
+    -- staging). Reveal previously visible lines when a new diff hides them.
+    if not target.cursor_folded then
+      reveal_cursor_line(win.id)
+    end
     self.cursor_map[path] = nil
   end
   return ok
